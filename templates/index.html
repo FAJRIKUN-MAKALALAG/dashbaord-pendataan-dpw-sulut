@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto-Enrichment Data System - Pendataan Pengurus & Anggota</title>
+    <!-- Google Fonts: Plus Jakarta Sans & Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Navigation Bar -->
+        <header class="app-header">
+            <div class="header-brand">
+                <div class="brand-logo">
+                    <span class="logo-icon">🦅</span>
+                </div>
+                <div class="brand-text">
+                    <div class="badge-title">SISTEM OTOMATISASI PENDATAAN v1.0</div>
+                    <h1>Auto-Enrichment Data Anggota & Pengurus</h1>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="btn-reset-data" class="btn btn-secondary" title="Hapus dan reset data untuk memulai dari awal">
+                    <span class="btn-icon">🗑️</span> Reset / Muat Ulang
+                </button>
+                <button id="btn-run-process" class="btn btn-primary" disabled>
+                    <span class="btn-icon">🔄</span> Jalankan Pencocokan Data
+                </button>
+                <button id="btn-export-excel" class="btn btn-success" disabled>
+                    <span class="btn-icon">💾</span> Konfirmasi & Export Excel
+                </button>
+            </div>
+
+        </header>
+
+        <!-- Main Content Layout -->
+        <main class="main-content">
+            <!-- Upload & Setup Grid -->
+            <section class="upload-section">
+                <!-- Card Master -->
+                <div class="upload-card" id="card-master">
+                    <div class="card-header">
+                        <div class="card-badge badge-master">DATA MASTER (PUSAT)</div>
+                        <div class="card-header-actions">
+                            <span id="master-file-status" class="file-status">Belum ada file</span>
+                            <button id="btn-delete-master" class="btn-delete-file" title="Hapus file Master ini" style="display: none;">
+                                🗑️ Hapus
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-desc">Database lengkap rujukan dari web pusat (memuat NIK, eKTA, No Telp, Email, dll).</p>
+                        <label class="file-dropzone" for="master-input" id="master-dropzone">
+                            <span class="drop-icon">📁</span>
+                            <span class="drop-text" id="master-drop-text">Klik atau seret file Excel/CSV Master ke sini</span>
+                            <input type="file" id="master-input" accept=".xlsx, .xls, .csv" hidden>
+                        </label>
+                    </div>
+                    <div class="card-footer">
+                        <span class="row-count" id="master-count">0 baris data</span>
+                    </div>
+                </div>
+
+                <!-- Card Target -->
+                <div class="upload-card" id="card-target">
+                    <div class="card-header">
+                        <div class="card-badge badge-target">DATA TARGET (LOKAL)</div>
+                        <div class="card-header-actions">
+                            <span id="target-file-status" class="file-status">Belum ada file</span>
+                            <button id="btn-delete-target" class="btn-delete-file" title="Hapus file Target ini" style="display: none;">
+                                🗑️ Hapus
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-desc">Data mentah daerah yang belum lengkap dan ingin diisi otomatis NIK & eKTA-nya.</p>
+                        <label class="file-dropzone" for="target-input" id="target-dropzone">
+                            <span class="drop-icon">📋</span>
+                            <span class="drop-text" id="target-drop-text">Klik atau seret file Excel/CSV Target ke sini</span>
+                            <input type="file" id="target-input" accept=".xlsx, .xls, .csv" hidden>
+                        </label>
+                    </div>
+                    <div class="card-footer">
+                        <span class="row-count" id="target-count">0 baris data</span>
+                    </div>
+                </div>
+
+            </section>
+
+            <!-- KPI Summary Cards (Muncul setelah pencocokan) -->
+            <section class="kpi-grid" id="kpi-grid" style="display: none;">
+                <div class="kpi-card card-blue">
+                    <div class="kpi-label">TOTAL DATA TARGET</div>
+                    <div class="kpi-value" id="kpi-total">0</div>
+                    <div class="kpi-sub">Baris data yang diproses</div>
+                </div>
+                <div class="kpi-card card-emerald">
+                    <div class="kpi-label">BERHASIL DIPERKAYA</div>
+                    <div class="kpi-value" id="kpi-matched">0</div>
+                    <div class="kpi-sub" id="kpi-rate">0% Tingkat Match</div>
+                </div>
+                <div class="kpi-card card-rose">
+                    <div class="kpi-label">GAGAL / BELUM LENGKAP</div>
+                    <div class="kpi-value" id="kpi-unmatched">0</div>
+                    <div class="kpi-sub">Perlu audit/tinjauan manual</div>
+                </div>
+                <div class="kpi-card card-amber">
+                    <div class="kpi-label">WAKTU EKSEKUSI</div>
+                    <div class="kpi-value" id="kpi-time">0s</div>
+                    <div class="kpi-sub">Composite Key Engine</div>
+                </div>
+            </section>
+
+            <!-- Table & Visualisasi Container -->
+            <section class="table-section">
+                <!-- Navigation Tabs -->
+                <div class="table-header-bar">
+                    <div class="tab-group">
+                        <button class="tab-btn active" data-tab="matched" id="tab-matched">
+                            <span class="tab-dot dot-success"></span>
+                            Data Berhasil Diperkaya
+                            <span class="tab-count" id="count-badge-matched">0</span>
+                        </button>
+                        <button class="tab-btn" data-tab="unmatched" id="tab-unmatched">
+                            <span class="tab-dot dot-danger"></span>
+                            Data Gagal Match
+                            <span class="tab-count" id="count-badge-unmatched">0</span>
+                        </button>
+                        <button class="tab-btn" data-tab="target" id="tab-target">
+                            <span class="tab-dot dot-info"></span>
+                            Data Target Mentah
+                            <span class="tab-count" id="count-badge-target">0</span>
+                        </button>
+                        <button class="tab-btn" data-tab="master" id="tab-master">
+                            <span class="tab-dot dot-purple"></span>
+                            Data Master Pusat
+                            <span class="tab-count" id="count-badge-master">0</span>
+                        </button>
+                    </div>
+
+                    <!-- Search & Filter Controls -->
+                    <div class="filter-group">
+                        <div class="search-box">
+                            <span class="search-icon">🔍</span>
+                            <input type="text" id="table-search" placeholder="Cari nama, NIK, wilayah..." autocomplete="off">
+                            <button id="clear-search" class="clear-btn" style="display: none;">&times;</button>
+                        </div>
+                        <select id="dpd-filter" class="filter-select">
+                            <option value="">Semua DPD / Kabupaten</option>
+                        </select>
+                        <select id="limit-select" class="filter-select select-limit">
+                            <option value="15">15 Baris</option>
+                            <option value="30">30 Baris</option>
+                            <option value="50">50 Baris</option>
+                            <option value="100">100 Baris</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Table Content Wrapper -->
+                <div class="table-container">
+                    <div id="table-loading" class="table-overlay" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Memuat dan memfilter data...</p>
+                    </div>
+
+                    <div id="table-empty" class="empty-state">
+                        <div class="empty-icon">📁</div>
+                        <h3>Menunggu File Data Real</h3>
+                        <p>Silakan unggah file <strong>Data Master (Pusat)</strong> dan <strong>Data Target (Lokal)</strong> pada kotak di atas untuk memulai pencocokan data.</p>
+                    </div>
+
+
+                    <table class="data-table" id="data-table" style="display: none;">
+                        <thead id="table-head">
+                            <!-- Injected by JavaScript -->
+                        </thead>
+                        <tbody id="table-body">
+                            <!-- Injected by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination Bar -->
+                <div class="pagination-bar" id="pagination-bar" style="display: none;">
+                    <div class="pagination-info" id="pagination-info">
+                        Menampilkan 0 dari 0 data
+                    </div>
+                    <div class="pagination-controls">
+                        <button id="btn-page-first" class="btn-page" title="Halaman Pertama">&laquo;</button>
+                        <button id="btn-page-prev" class="btn-page" title="Sebelumnya">&lsaquo;</button>
+                        <span class="page-current" id="page-display">1 / 1</span>
+                        <button id="btn-page-next" class="btn-page" title="Berikutnya">&rsaquo;</button>
+                        <button id="btn-page-last" class="btn-page" title="Halaman Terakhir">&raquo;</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Export Modal -->
+        <div class="modal-backdrop" id="export-modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>🎉 Data Berhasil Dilengkapi ke File Target Anda</h2>
+                    <button class="modal-close" id="modal-close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p>Data telah dimasukkan langsung ke file Excel template asli Anda. Font, warna, judul, dan layout sel <strong>100% sama persis tanpa perlu dirapikan lagi</strong>:</p>
+                    
+                    <div class="export-file-list">
+                        <!-- File Template Asli Terisi -->
+                        <div class="export-file-item item-success" id="modal-template-card">
+                            <div class="file-info">
+                                <span class="file-icon">🌟</span>
+                                <div>
+                                    <h4 id="modal-template-title">DPC TARERAN.xlsx (Format Asli Lengkap)</h4>
+                                    <p id="modal-template-desc">Memakai file target asli Anda yang sudah terisi otomatis NIK, E-KTA, No Telepon, & Email.</p>
+                                </div>
+                            </div>
+                            <a id="btn-download-template" href="/api/download/DPC%20TARERAN.xlsx" class="btn btn-sm btn-primary" download>
+                                Unduh File Asli
+                            </a>
+                        </div>
+
+                        <!-- File Laporan Sukses Alternatif -->
+                        <div class="export-file-item" style="border-left: 4px solid var(--info);">
+                            <div class="file-info">
+                                <span class="file-icon">📗</span>
+                                <div>
+                                    <h4>Data_Lengkap_Sukses.xlsx</h4>
+                                    <p>Format tabel standar sistem pendataan dengan info penambahan data.</p>
+                                </div>
+                            </div>
+                            <a id="btn-download-success" href="/api/download/Data_Lengkap_Sukses.xlsx" class="btn btn-sm btn-secondary" download>
+                                Unduh Alternatif
+                            </a>
+                        </div>
+
+                        <!-- File Gagal Jika Ada -->
+                        <div class="export-file-item item-danger" id="modal-failed-card" style="display: none;">
+                            <div class="file-info">
+                                <span class="file-icon">📕</span>
+                                <div>
+                                    <h4>Data_Gagal_Match.xlsx</h4>
+                                    <p id="modal-failed-desc">Daftar pengurus yang belum cocok untuk ditinjau manual.</p>
+                                </div>
+                            </div>
+                            <a id="btn-download-failed" href="/api/download/Data_Gagal_Match.xlsx" class="btn btn-sm btn-danger" download>
+                                Unduh File Gagal
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="modal-close-footer">Tutup</button>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Toast Notifications -->
+        <div id="toast-container" class="toast-container"></div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
