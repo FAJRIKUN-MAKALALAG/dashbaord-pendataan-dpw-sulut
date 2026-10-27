@@ -8,7 +8,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦅</text></svg>">
+    <link rel="stylesheet" href="/static/css/style.css?v=3.2">
 </head>
 <body>
     <div class="app-container">
@@ -203,60 +204,39 @@
 
         <!-- Export Modal -->
         <div class="modal-backdrop" id="export-modal" style="display: none;">
-            <div class="modal-content">
+            <div class="modal-content" style="max-width: 560px;">
                 <div class="modal-header">
-                    <h2>🎉 Data Berhasil Dilengkapi ke File Target Anda</h2>
+                    <h2>🎉 File Excel Siap Diunduh (1 File Lengkap)</h2>
                     <button class="modal-close" id="modal-close-btn">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <p>Data telah dimasukkan langsung ke file Excel template asli Anda. Font, warna, judul, dan layout sel <strong>100% sama persis tanpa perlu dirapikan lagi</strong>:</p>
+                    <p style="margin-bottom: 16px; color: var(--text-secondary); line-height: 1.5; font-size: 13px;">
+                        Semua data pengurus <strong>tetap berada di dalam 1 file Excel Anda</strong>. Urutan jabatan tidak berubah dan tidak ada baris yang dipisah ke file lain:
+                    </p>
                     
-                    <div class="export-file-list">
-                        <!-- File Template Asli Terisi -->
-                        <div class="export-file-item item-success" id="modal-template-card">
+                    <div class="export-file-list" style="margin-bottom: 8px;">
+                        <!-- File Utama (1 File Lengkap) -->
+                        <div class="export-file-item item-success" id="modal-template-card" style="padding: 18px; border-width: 2px;">
                             <div class="file-info">
-                                <span class="file-icon">🌟</span>
+                                <span class="file-icon" style="font-size: 32px;">📊</span>
                                 <div>
-                                    <h4 id="modal-template-title">DPC TARERAN.xlsx (Format Asli Lengkap)</h4>
-                                    <p id="modal-template-desc">Memakai file target asli Anda yang sudah terisi otomatis NIK, E-KTA, No Telepon, & Email.</p>
+                                    <h4 id="modal-template-title" style="font-size: 15px; margin-bottom: 6px; color: var(--text-primary); font-weight: 700;">DPC BILALANG.xlsx</h4>
+                                    <p id="modal-template-desc" style="font-size: 12px; line-height: 1.5; color: var(--text-secondary);">
+                                        📁 <strong>Sheet 1:</strong> Format Asli Target (Urutan jabatan lengkap 1 s/d selesai)<br>
+                                        📝 <strong>Sheet 2:</strong> Catatan Belum Lengkap (khusus data yang belum ada di pusat)
+                                    </p>
                                 </div>
                             </div>
-                            <a id="btn-download-template" href="/api/download/DPC%20TARERAN.xlsx" class="btn btn-sm btn-primary" download>
-                                Unduh File Asli
-                            </a>
-                        </div>
-
-                        <!-- File Laporan Sukses Alternatif -->
-                        <div class="export-file-item" style="border-left: 4px solid var(--info);">
-                            <div class="file-info">
-                                <span class="file-icon">📗</span>
-                                <div>
-                                    <h4>Data_Lengkap_Sukses.xlsx</h4>
-                                    <p>Format tabel standar sistem pendataan dengan info penambahan data.</p>
-                                </div>
+                            <div style="margin-top: 14px; text-align: right;">
+                                <a id="btn-download-template" href="#" class="btn btn-primary" style="padding: 10px 22px; font-weight: 700; font-size: 13.5px;" download>
+                                    📥 Unduh File Excel Sekarang
+                                </a>
                             </div>
-                            <a id="btn-download-success" href="/api/download/Data_Lengkap_Sukses.xlsx" class="btn btn-sm btn-secondary" download>
-                                Unduh Alternatif
-                            </a>
-                        </div>
-
-                        <!-- File Gagal Jika Ada -->
-                        <div class="export-file-item item-danger" id="modal-failed-card" style="display: none;">
-                            <div class="file-info">
-                                <span class="file-icon">📕</span>
-                                <div>
-                                    <h4>Data_Gagal_Match.xlsx</h4>
-                                    <p id="modal-failed-desc">Daftar pengurus yang belum cocok untuk ditinjau manual.</p>
-                                </div>
-                            </div>
-                            <a id="btn-download-failed" href="/api/download/Data_Gagal_Match.xlsx" class="btn btn-sm btn-danger" download>
-                                Unduh File Gagal
-                            </a>
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" id="modal-close-footer">Tutup</button>
+                    <button class="btn btn-secondary" id="modal-close-footer">Selesai / Tutup</button>
                 </div>
             </div>
         </div>
@@ -266,6 +246,6 @@
         <div id="toast-container" class="toast-container"></div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=3.2"></script>
 </body>
 </html>

@@ -2,6 +2,17 @@
 
 // Multi-tenant Session Isolation: Setiap browser memiliki ID unik yang disimpan di LocalStorage
 function getSessionId() {
+    // 1. Cek parameter URL ?session_id=... jika ada
+    try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const paramSid = urlParams.get('session_id');
+        if (paramSid) {
+            localStorage.setItem('nasdem_user_session_id', paramSid);
+            return paramSid;
+        }
+    } catch (e) {}
+
+    // 2. Ambil dari localStorage atau buat baru
     let sid = localStorage.getItem('nasdem_user_session_id');
     if (!sid) {
         sid = 'sess_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now();
@@ -264,8 +275,9 @@ function renderTable(data) {
     el.dataTable.style.display = 'table';
     el.paginationBar.style.display = 'flex';
 
-    // 1. Render Table Head (Filter out internal columns like _status)
-    const visibleCols = columns.filter(c => c !== '_status');
+    // 1. Render Table Head (Filter out internal columns like _status, _excel_row, dll)
+    const hiddenCols = ['_status', '_excel_row', '_is_section', '_section_title'];
+    const visibleCols = columns.filter(c => !hiddenCols.includes(c));
     
     el.tableHead.innerHTML = `
         <tr>
@@ -277,6 +289,19 @@ function renderTable(data) {
     // 2. Render Table Body
     const startIdx = (page - 1) * state.limit;
     el.tableBody.innerHTML = rows.map((row, idx) => {
+        const isSection = row['_status'] === 'STRUKTUR' || row['_is_section'] === true || row['_is_section'] === 'True';
+        if (isSection) {
+            const sectionTitle = row['_section_title'] || row['No'] || 'SUB-STRUKTUR ORGANISASI';
+            return `
+                <tr class="row-section-header">
+                    <td style="text-align: center; color: #b45309; font-weight: 700;">📁</td>
+                    <td colspan="${visibleCols.length}" class="cell-section-title">
+                        <span class="badge-section-icon">🏛️</span>
+                        <strong>${sectionTitle}</strong>
+                    </td>
+                </tr>
+            `;
+        }
         return `
             <tr>
                 <td style="text-align: center; color: var(--text-muted);">${startIdx + idx + 1}</td>
@@ -323,7 +348,7 @@ function renderCell(colName, val, row) {
 
     // Metode Pencocokan badge
     if (colName === '_metode_match') {
-        return `<td><span class="badge-enriched" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; border-color: rgba(14, 165, 233, 0.3);">🎯 ${text}</span></td>`;
+        return `<td><span class="badge-enriched" style="background: var(--info-bg); color: var(--info-text); border-color: var(--info-border);">🎯 ${text}</span></td>`;
     }
 
 
@@ -559,30 +584,16 @@ function setupEventListeners() {
             const res = await fetch('/api/export', { method: 'POST' });
             const data = await res.json();
             
-                // Update download link template asli dan alternatif dengan ID sesi
+            if (data.success) {
+                // Update download link template asli (1 file lengkap)
                 const sidParam = `session_id=${encodeURIComponent(getSessionId())}`;
                 const templateFn = data.template_filename || (data.files && data.files.template);
                 const btnDownloadTemplate = document.getElementById('btn-download-template');
-                const btnDownloadSuccess = document.getElementById('btn-download-success');
-                const btnDownloadFailed = document.getElementById('btn-download-failed');
                 const titleTemplate = document.getElementById('modal-template-title');
-                const failedCard = document.getElementById('modal-failed-card');
                 
                 if (templateFn && btnDownloadTemplate) {
                     btnDownloadTemplate.href = `/api/download/${encodeURIComponent(templateFn)}?${sidParam}`;
-                    if (titleTemplate) titleTemplate.textContent = `${templateFn} (Format Asli Lengkap)`;
-                }
-
-                if (btnDownloadSuccess) {
-                    btnDownloadSuccess.href = `/api/download/Data_Lengkap_Sukses.xlsx?${sidParam}`;
-                }
-
-                if (btnDownloadFailed) {
-                    btnDownloadFailed.href = `/api/download/Data_Gagal_Match.xlsx?${sidParam}`;
-                }
-
-                if (failedCard) {
-                    failedCard.style.display = state.unmatchedCount > 0 ? 'flex' : 'none';
+                    if (titleTemplate) titleTemplate.textContent = `${templateFn} (1 File Lengkap)`;
                 }
 
                 el.exportModal.style.display = 'flex';
@@ -654,9 +665,11 @@ async function handleFileUpload(file, type) {
             showToast(`File ${file.name} berhasil dimuat.`, 'success');
             if (type === 'master') {
                 state.hasMaster = true;
+                state.masterFilename = data.master_filename || file.name;
                 state.masterRows = data.master_rows;
             } else {
                 state.hasTarget = true;
+                state.targetFilename = data.target_filename || file.name;
                 state.targetRows = data.target_rows;
             }
             state.hasProcessed = false;
@@ -672,6 +685,9 @@ async function handleFileUpload(file, type) {
         }
     } catch (err) {
         showToast('Terjadi kesalahan jaringan saat mengunggah', 'danger');
+    } finally {
+        if (type === 'master' && el.masterInput) el.masterInput.value = '';
+        if (type === 'target' && el.targetInput) el.targetInput.value = '';
     }
 }
 

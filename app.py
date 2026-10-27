@@ -86,8 +86,11 @@ def smart_load_file(file_path: str):
     if ext in ['.xlsx', '.xls']:
         import openpyxl
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
-        ws = wb.active
-        rows = list(ws.iter_rows(max_row=8, values_only=True))
+        try:
+            ws = wb.active
+            rows = list(ws.iter_rows(max_row=8, values_only=True))
+        finally:
+            wb.close()
         header_idx = 0
         metadata = {}
         
@@ -110,10 +113,18 @@ def smart_load_file(file_path: str):
                 if m: metadata['dpd'] = m.group(1).strip()
 
         df = pd.read_excel(file_path, skiprows=header_idx, dtype=str)
-        df = df.dropna(how='all')
+        # Catat baris asli Excel (1-based index) sebelum baris kosong dibersihkan
+        df['_excel_row'] = [header_idx + 2 + i for i in range(len(df))]
+        
+        # Bersihkan baris yang seluruh isinya kosong (selain _excel_row)
+        content_cols = [c for c in df.columns if c != '_excel_row']
+        df = df.dropna(subset=content_cols, how='all')
         return df, metadata
     elif ext == '.csv':
-        df = pd.read_csv(file_path, dtype=str).dropna(how='all')
+        df = pd.read_csv(file_path, dtype=str)
+        df['_excel_row'] = [i + 2 for i in range(len(df))]
+        content_cols = [c for c in df.columns if c != '_excel_row']
+        df = df.dropna(subset=content_cols, how='all')
         return df, {}
     else:
         raise ValueError("Format file harus .xlsx, .xls, atau .csv")
@@ -133,9 +144,14 @@ def check_and_autoload_input_dir(sid=None):
         root_dir = app.config['UPLOAD_FOLDER']
         files = [f for f in os.listdir(root_dir) if os.path.isfile(os.path.join(root_dir, f)) and f.endswith(('.xlsx', '.xls', '.csv')) and not f.startswith('~$')]
         scan_dir = root_dir
+
+    # Urutkan file berdasarkan waktu modifikasi/upload terbaru (mtime descending)
+    if files:
+        files.sort(key=lambda f: os.path.getmtime(os.path.join(scan_dir, f)), reverse=True)
     
-    if session['master_df'] is None:
-        master_candidates = [f for f in files if any(k in f.lower() for k in ['master', 'pusat', 'digital'])]
+    # Jangan autoload jika pengguna sengaja menghapus file
+    if not session.get('deleted_master') and session['master_df'] is None:
+        master_candidates = [f for f in files if any(k in f.lower() for k in ['master', 'pusat', 'digital', 'bolmong', 'minsel'])]
         if master_candidates:
             m_path = os.path.join(scan_dir, master_candidates[0])
             try:
@@ -145,8 +161,8 @@ def check_and_autoload_input_dir(sid=None):
                 session['master_path'] = m_path
             except Exception: pass
 
-    if session['target_df'] is None:
-        target_candidates = [f for f in files if any(k in f.lower() for k in ['target', 'dpc', 'dpd', 'dprt', 'pengurus', 'lokal', 'tareran'])]
+    if not session.get('deleted_target') and session['target_df'] is None:
+        target_candidates = [f for f in files if any(k in f.lower() for k in ['target', 'dpc', 'dpd', 'dprt', 'pengurus', 'lokal', 'tareran', 'bilalang', 'amurang'])]
         if target_candidates:
             t_path = os.path.join(scan_dir, target_candidates[0])
             try:
@@ -160,6 +176,17 @@ def check_and_autoload_input_dir(sid=None):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204
+
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/api/status', methods=['GET'])
 def get_status():
@@ -194,10 +221,16 @@ def delete_file():
         file_type = data.get('type') # 'master' atau 'target'
         
         if file_type == 'master':
+            session['deleted_master'] = True
             path = session.get('master_path')
             if path and os.path.exists(path):
                 try: os.remove(path)
                 except Exception: pass
+            u_dir, _ = get_session_dirs(sid)
+            for f in os.listdir(u_dir):
+                if any(k in f.lower() for k in ['master', 'pusat', 'digital', 'bolmong', 'minsel']):
+                    try: os.remove(os.path.join(u_dir, f))
+                    except Exception: pass
             session['master_df'] = None
             session['master_meta'] = {}
             session['master_path'] = None
@@ -206,10 +239,16 @@ def delete_file():
             session['summary'] = None
             msg = "File Data Master berhasil dihapus dari sesi Anda."
         elif file_type == 'target':
+            session['deleted_target'] = True
             path = session.get('target_path')
             if path and os.path.exists(path):
                 try: os.remove(path)
                 except Exception: pass
+            u_dir, _ = get_session_dirs(sid)
+            for f in os.listdir(u_dir):
+                if any(k in f.lower() for k in ['target', 'dpc', 'dpd', 'dprt', 'pengurus', 'lokal', 'tareran', 'bilalang', 'amurang']):
+                    try: os.remove(os.path.join(u_dir, f))
+                    except Exception: pass
             session['target_df'] = None
             session['target_meta'] = {}
             session['target_path'] = None
@@ -239,6 +278,8 @@ def reset_data():
     session['unmatched_df'] = None
     session['summary'] = None
     session['engine'] = None
+    session['deleted_master'] = False
+    session['deleted_target'] = False
 
     # Bersihkan file hanya di folder sesi pengguna ini
     u_dir, o_dir = get_session_dirs(sid)
@@ -271,6 +312,12 @@ def upload_files():
             return jsonify({'success': False, 'error': 'Tidak ada file yang diunggah.'}), 400
 
         if master_file and master_file.filename != '':
+            session['deleted_master'] = False
+            # Bersihkan file master lama di sesi ini agar tidak menumpuk
+            for f in os.listdir(u_dir):
+                if any(k in f.lower() for k in ['master', 'pusat', 'digital', 'bolmong', 'minsel']):
+                    try: os.remove(os.path.join(u_dir, f))
+                    except Exception: pass
             m_path = os.path.join(u_dir, master_file.filename)
             master_file.save(m_path)
             df, meta = smart_load_file(m_path)
@@ -279,6 +326,12 @@ def upload_files():
             session['master_path'] = m_path
 
         if target_file and target_file.filename != '':
+            session['deleted_target'] = False
+            # Bersihkan file target lama di sesi ini agar tidak menumpuk
+            for f in os.listdir(u_dir):
+                if any(k in f.lower() for k in ['target', 'dpc', 'dpd', 'dprt', 'pengurus', 'lokal', 'tareran', 'bilalang', 'amurang']):
+                    try: os.remove(os.path.join(u_dir, f))
+                    except Exception: pass
             t_path = os.path.join(u_dir, target_file.filename)
             target_file.save(t_path)
             df, meta = smart_load_file(t_path)
@@ -293,6 +346,8 @@ def upload_files():
         return jsonify({
             'success': True,
             'message': 'File berhasil diunggah ke workspace Anda.',
+            'master_filename': os.path.basename(session['master_path']) if session.get('master_path') else '',
+            'target_filename': os.path.basename(session['target_path']) if session.get('target_path') else '',
             'master_rows': len(session['master_df']) if session['master_df'] is not None else 0,
             'target_rows': len(session['target_df']) if session['target_df'] is not None else 0
         })

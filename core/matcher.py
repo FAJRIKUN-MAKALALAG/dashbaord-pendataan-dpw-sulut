@@ -8,9 +8,12 @@ from .cleaner import (
 )
 
 COLUMN_SYNONYMS = {
+    'no': [
+        'no', 'no.', 'nomor', 'nomor urut', 'urutan'
+    ],
     'nama': [
-        'nama lengkap (sesuai ktp)', 'nama lengkap (sesuai ktp)', 'nama lengkap',
-        'nama', 'nama pengurus', 'name', 'full name', 'nama anggota'
+        'nama lengkap (sesuai ktp)', 'nama lengkap', 'nama',
+        'nama pengurus', 'name', 'full name', 'nama anggota'
     ],
     'dpd': [
         'kab/kota', 'kabupaten/kota', 'kabupaten', 'kota', 'dpd',
@@ -70,9 +73,48 @@ def detect_column(df_columns: List[str], target_key: str) -> Optional[str]:
 def detect_all_columns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
     """Mendeteksi pemetaan kolom standar untuk sebuah DataFrame."""
     mapping = {}
-    for key in ['nama', 'dpd', 'dpc', 'dprt', 'nik', 'ekta', 'telepon', 'email', 'jabatan']:
+    for key in ['no', 'nama', 'dpd', 'dpc', 'dprt', 'nik', 'ekta', 'telepon', 'email', 'jabatan']:
         mapping[key] = detect_column(df.columns.tolist(), key)
     return mapping
+
+def is_section_header_row(row_dict: dict, nama_col: str, no_col: Optional[str] = None, jabatan_col: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Mendeteksi baris pembagi struktur organisasi (seperti I. DEWAN PERTIMBANGAN, II. DEWAN PAKAR, III. DPC).
+    Baris-baris ini bukan merupakan orang/anggota, sehingga tidak boleh dianggap gagal match atau dirusak.
+    """
+    nama = clean_text(row_dict.get(nama_col, ''))
+    no_val = clean_text(row_dict.get(no_col, '')) if no_col else ''
+    jabatan = clean_text(row_dict.get(jabatan_col, '')) if jabatan_col else ''
+    
+    is_nama_empty = (not nama) or nama.lower() in ['-', '--', '---', '.', 'none', 'nan', 'null', '0']
+    
+    section_keywords = [
+        'dewan pertimbangan', 'wantim', 'dewan pakar', 'wankar',
+        'dewan pimpinan', 'dpc', 'dpd', 'dprt', 'pengurus cabang',
+        'pengurus ranting', 'pengurus harian', 'majelis', 'struktur', 'badan'
+    ]
+    
+    if not is_nama_empty:
+        if any(k in nama.lower() for k in ['dewan pertimbangan', 'dewan pakar', 'dewan pimpinan', 'wantim', 'wankar']):
+            return True, nama
+        return False, ""
+        
+    all_text = f"{no_val} {jabatan}".lower()
+    
+    if any(k in all_text for k in section_keywords):
+        title = no_val or jabatan or "SUB-STRUKTUR"
+        return True, title
+        
+    roman_pattern = r'^(?:[IVXLCDM]+\.|\b(?:I|II|III|IV|V|VI|VII|VIII|IX|X)\b)'
+    if re.search(roman_pattern, no_val, re.IGNORECASE):
+        title = no_val or jabatan or "SUB-STRUKTUR"
+        return True, title
+        
+    if no_val and not no_val.replace('.', '').isdigit() and len(no_val) > 2:
+        title = no_val or jabatan or "SUB-STRUKTUR"
+        return True, title
+        
+    return False, ""
 
 class DataMatcherEngine:
     def __init__(self, master_df: pd.DataFrame, target_df: pd.DataFrame,
@@ -123,6 +165,8 @@ class DataMatcherEngine:
         m_email_col = self.master_cols.get('email')
 
         t_nama_col = self.target_cols['nama']
+        t_no_col = self.target_cols.get('no')
+        t_jabatan_col = self.target_cols.get('jabatan')
         t_nik_col = self.target_cols.get('nik')
         t_kta_col = self.target_cols.get('ekta')
         t_dpc_col = self.target_cols.get('dpc')
@@ -135,7 +179,6 @@ class DataMatcherEngine:
         
         if m_nik_col:
             master_clean['_clean_nik'] = master_clean[m_nik_col].apply(clean_nik)
-            # Filter baris yang punya NIK valid (biasanya 16 digit)
             valid_nik_master = master_clean[master_clean['_clean_nik'] != ''].drop_duplicates(subset=['_clean_nik'], keep='first')
             nik_lookup = valid_nik_master.set_index('_clean_nik')
         else:
@@ -162,6 +205,18 @@ class DataMatcherEngine:
         # 2. Iterasi Data Target
         for idx, row in self.target_df.iterrows():
             row_dict = row.to_dict()
+            
+            # CEK APAKAH BARIS INI ADALAH SUB-STRUKTUR (WANTIM, WANKAR, DPC, DLL)
+            is_section, section_title = is_section_header_row(row_dict, t_nama_col, t_no_col, t_jabatan_col)
+            if is_section:
+                row_dict['_status'] = 'STRUKTUR'
+                row_dict['_is_section'] = True
+                row_dict['_section_title'] = section_title
+                row_dict['_metode_match'] = 'Sub-Struktur Organisasi'
+                row_dict['_kolom_diperkaya'] = f"Kategori: {section_title}"
+                matched_records.append(row_dict)
+                continue
+
             raw_nama = clean_text(row.get(t_nama_col, ''))
             norm_nama = normalize_person_name(raw_nama)
             
@@ -285,16 +340,20 @@ class DataMatcherEngine:
         self.unmatched_df = pd.DataFrame(unmatched_records)
 
         elapsed = round(time.time() - start_time, 2)
-        total_target = len(self.target_df)
-        total_matched = len(self.matched_df)
-        total_unmatched = len(self.unmatched_df)
-        rate = round((total_matched / total_target * 100), 2) if total_target > 0 else 0
+        
+        # Hitung statistik hanya untuk pengurus/anggota riil (tidak termasuk baris sub-struktur wantim/wankar)
+        real_people_target = sum(1 for r in matched_records if not r.get('_is_section')) + len(unmatched_records)
+        real_people_matched = sum(1 for r in matched_records if not r.get('_is_section'))
+        real_people_unmatched = len(unmatched_records)
+        rate = round((real_people_matched / real_people_target * 100), 2) if real_people_target > 0 else 0
 
         self.summary = {
-            'total_target': total_target,
+            'total_target': real_people_target,
+            'total_target_with_headers': len(self.target_df),
             'total_master': len(self.master_df),
-            'matched_count': total_matched,
-            'unmatched_count': total_unmatched,
+            'matched_count': real_people_matched,
+            'unmatched_count': real_people_unmatched,
+            'section_count': len(matched_records) - real_people_matched,
             'match_rate_pct': rate,
             'elapsed_seconds': elapsed,
             'master_columns': self.master_cols,

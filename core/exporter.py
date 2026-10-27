@@ -5,25 +5,25 @@ from openpyxl.utils import get_column_letter
 import pandas as pd
 from typing import Dict, Any, Optional
 
-def export_enriched_original_template(original_target_path: str, matched_df: pd.DataFrame, output_dir: str) -> str:
+from .cleaner import normalize_person_name
+
+def export_enriched_original_template(original_target_path: str, matched_df: pd.DataFrame, output_dir: str, unmatched_df: Optional[pd.DataFrame] = None) -> str:
     """
     Menyimpan hasil langsung ke salinan template file target asli pengguna,
     sehingga format, font, merge cell, dan layout asli tidak berubah sama sekali.
+    Mendukung baris sub-struktur (Wantim, Wankar, DPC) tanpa pergeseran baris.
+    Jika ada data yang belum lengkap, dirangkum di Sheet 2 'Catatan Belum Lengkap' pada file yang sama!
     """
     os.makedirs(output_dir, exist_ok=True)
     orig_filename = os.path.basename(original_target_path)
-    base_name, ext = os.path.splitext(orig_filename)
-    
-    # Gunakan nama file yang sama dengan file target asli pengguna
-    output_filename = f"{orig_filename}"
-    output_path = os.path.join(output_dir, output_filename)
+    output_path = os.path.join(output_dir, orig_filename)
     
     wb = openpyxl.load_workbook(original_target_path)
     ws = wb.active
     
     # 1. Cari baris header
     header_row_num = 1
-    for r in range(1, 10):
+    for r in range(1, 15):
         vals = [str(ws.cell(r, c).value or '').lower() for c in range(1, ws.max_column + 1)]
         if any('nama' in v for v in vals):
             header_row_num = r
@@ -36,48 +36,132 @@ def export_enriched_original_template(original_target_path: str, matched_df: pd.
         if val:
             col_map[val] = c
             
-    # 3. Masukkan data yang diperkaya langsung ke sel template asli
+    # Temukan indeks kolom penting
+    c_nama = None
+    c_nik = None
+    c_kta = None
+    c_email = None
+    c_telp = None
+    
+    for k, idx in col_map.items():
+        k_clean = k.strip().lower()
+        if 'nama' in k_clean:
+            if c_nama is None:
+                c_nama = idx
+        elif any(x in k_clean for x in ['no. nik', 'no nik', 'nik', 'nomor ktp', 'no. ktp', 'no ktp']) or (k_clean == 'ktp'):
+            if c_nik is None:
+                c_nik = idx
+        elif any(x in k_clean for x in ['e-kta', 'ekta', 'nomor e-kta', 'no kta', 'kta']):
+            if c_kta is None:
+                c_kta = idx
+        elif any(x in k_clean for x in ['email', 'surel']):
+            if c_email is None:
+                c_email = idx
+        elif any(x in k_clean for x in ['telepon', 'no hp', 'hp', 'phone', 'telp']):
+            if c_telp is None:
+                c_telp = idx
+
+    # 3. Buat indeks lookup data yang diperkaya
+    # Dipetakan berdasarkan: (1) Nomor baris excel asli (_excel_row), dan (2) Nama normalisasi
+    row_by_excel_line = {}
+    row_by_name = {}
+    
     if matched_df is not None and not matched_df.empty:
-        for idx, m_row in matched_df.iterrows():
-            excel_row = header_row_num + 1 + idx
+        for _, m_row in matched_df.iterrows():
+            # Lewati baris sub-struktur (Wantim, Wankar, DPC)
+            if str(m_row.get('_status', '')).upper() == 'STRUKTUR':
+                continue
+                
+            m_dict = m_row.to_dict()
+            e_line = m_row.get('_excel_row')
+            if e_line is not None:
+                try:
+                    row_by_excel_line[int(e_line)] = m_dict
+                except Exception:
+                    pass
+                    
+            raw_nama = str(m_row.get('Nama Lengkap (Sesuai KTP)') or m_row.get('Nama') or m_row.get('nama') or '').strip()
+            if raw_nama:
+                norm_nama = normalize_person_name(raw_nama)
+                if norm_nama:
+                    row_by_name[norm_nama] = m_dict
+
+    # 4. Tulis hasil tepat pada sel baris orang yang bersangkutan
+    for r in range(header_row_num + 1, ws.max_row + 1):
+        cell_nama_val = str(ws.cell(r, c_nama).value or '').strip() if c_nama else ''
+        norm_cell_name = normalize_person_name(cell_nama_val) if cell_nama_val else ''
+        
+        # Cari data yang cocok untuk baris r ini
+        m_data = row_by_excel_line.get(r)
+        
+        # Validasi nama jika ada m_data dari baris
+        if m_data is not None:
+            m_nama_str = normalize_person_name(str(m_data.get('Nama Lengkap (Sesuai KTP)') or m_data.get('Nama') or ''))
+            if norm_cell_name and m_nama_str and norm_cell_name != m_nama_str:
+                # Jika nama di baris r berbeda, prioritaskan pencocokan nama
+                m_data = row_by_name.get(norm_cell_name)
+        elif norm_cell_name in row_by_name:
+            m_data = row_by_name.get(norm_cell_name)
             
-            # Isi NIK
-            for k in ['no. nik', 'nomor ktp', 'nik', 'no nik']:
-                if k in col_map and m_row.get('No. NIK'):
-                    c_idx = col_map[k]
-                    cell = ws.cell(excel_row, c_idx)
-                    cell.value = str(m_row['No. NIK'])
-                    cell.number_format = '@'
-                    break
-                    
-            # Isi E-KTA
-            for k in ['e-kta nasdem', 'nomor e-kta', 'ekta', 'kta', 'nomor ekta']:
-                if k in col_map and m_row.get('E-KTA NasDem'):
-                    c_idx = col_map[k]
-                    cell = ws.cell(excel_row, c_idx)
-                    cell.value = str(m_row['E-KTA NasDem'])
-                    cell.number_format = '@'
-                    break
-                    
-            # Isi Email
-            for k in ['email', 'surel']:
-                if k in col_map and m_row.get('Email'):
-                    c_idx = col_map[k]
-                    cell = ws.cell(excel_row, c_idx)
-                    cell.value = str(m_row['Email'])
-                    break
-                    
-            # Isi No Telepon
-            for k in ['no telepon', 'no hp', 'telepon', 'no telp', 'phone']:
-                if k in col_map and m_row.get('No Telepon'):
-                    c_idx = col_map[k]
-                    cell = ws.cell(excel_row, c_idx)
-                    cell.value = str(m_row['No Telepon'])
-                    cell.number_format = '@'
-                    break
+        # Jika bukan baris anggota/pengurus yang cocok, lewati (jaga keaslian baris judul Wantim/Wankar)
+        if m_data is None:
+            continue
+            
+        # Tulis NIK
+        if c_nik:
+            val_nik = m_data.get('No. NIK') or m_data.get('Nomor KTP') or m_data.get('NIK')
+            if val_nik and str(val_nik).strip() not in ['', '-', 'None', 'nan']:
+                cell = ws.cell(r, c_nik)
+                cell.value = str(val_nik).strip()
+                cell.number_format = '@'
+
+        # Tulis E-KTA
+        if c_kta:
+            val_kta = m_data.get('E-KTA NasDem') or m_data.get('Nomor E-KTA') or m_data.get('E-KTA')
+            if val_kta and str(val_kta).strip() not in ['', '-', 'None', 'nan']:
+                cell = ws.cell(r, c_kta)
+                cell.value = str(val_kta).strip()
+                cell.number_format = '@'
+
+        # Tulis Email
+        if c_email:
+            val_email = m_data.get('Email') or m_data.get('email')
+            if val_email and str(val_email).strip() not in ['', '-', 'None', 'nan']:
+                cell = ws.cell(r, c_email)
+                cell.value = str(val_email).strip()
+
+        # Tulis No Telepon
+        if c_telp:
+            val_telp = m_data.get('No Telepon') or m_data.get('No HP') or m_data.get('Telepon')
+            if val_telp and str(val_telp).strip() not in ['', '-', 'None', 'nan']:
+                cell = ws.cell(r, c_telp)
+                cell.value = str(val_telp).strip()
+                cell.number_format = '@'
+
+    # 5. Rangkum data yang belum lengkap ke dalam Sheet 2 'Catatan Belum Lengkap' pada file yang sama
+    if unmatched_df is not None and not unmatched_df.empty:
+        # Filter hanya orang riil yang belum lengkap (bukan judul sub-struktur)
+        real_unmatched = unmatched_df[unmatched_df['_status'] != 'STRUKTUR'] if '_status' in unmatched_df.columns else unmatched_df
+        if not real_unmatched.empty:
+            if "Catatan Belum Lengkap" in wb.sheetnames:
+                del wb["Catatan Belum Lengkap"]
+            ws_note = wb.create_sheet(title="Catatan Belum Lengkap")
+            ws_note.append(["No", "Jabatan Pengurus", "Nama Lengkap (Sesuai KTP)", "Keterangan / Alasan Belum Cocok"])
+            for _, u_row in real_unmatched.iterrows():
+                no_v = str(u_row.get('No') or '').strip()
+                jab_v = str(u_row.get('Jabatan Pengurus') or u_row.get('Jabatan') or '').strip()
+                nama_v = str(u_row.get('Nama Lengkap (Sesuai KTP)') or u_row.get('Nama') or '').strip()
+                alasan_v = str(u_row.get('Keterangan_Gagal') or 'Nama tidak ditemukan pada database master pusat').strip()
+                ws_note.append([no_v, jab_v, nama_v, alasan_v])
+            style_excel_sheet(ws_note, is_success=False)
 
     wb.save(output_path)
+    try:
+        wb.close()
+    except Exception:
+        pass
     return output_path
+
 
 def style_excel_sheet(ws, is_success: bool = True):
     """Menerapkan styling profesional pada worksheet openpyxl."""
@@ -141,7 +225,12 @@ def export_results_to_excel(matched_df: pd.DataFrame, unmatched_df: pd.DataFrame
 
     # 1. Ekspor ke Template Asli Target jika ada
     if original_target_path and os.path.exists(original_target_path):
-        template_file = export_enriched_original_template(original_target_path, matched_df, output_dir)
+        template_file = export_enriched_original_template(
+            original_target_path, 
+            matched_df, 
+            output_dir,
+            unmatched_df=unmatched_df
+        )
         results['template_file'] = template_file
         results['template_filename'] = os.path.basename(template_file)
 
